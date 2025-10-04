@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -163,7 +165,7 @@ fun CameraScreen(onOpenMain: () -> Unit = {}) {
                         )
 
                     }
-                    
+
                     Spacer(modifier = Modifier.weight(1f))
                 }
 
@@ -212,6 +214,10 @@ fun CameraPreviewMorse(
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
 
+    var zoomLevel by remember { mutableStateOf(1f) }
+    var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
+    var maxZoomRatio by remember { mutableStateOf(10f) }
+
     val morseMap = remember {
         mapOf(
             listOf(0, 1) to 'a',
@@ -249,6 +255,9 @@ fun CameraPreviewMorse(
     var previousSignal by remember { mutableStateOf<Int?>(null) }
     var blueSegmentCount by remember { mutableStateOf(0) }
 
+    val colorBuffer = remember { mutableStateListOf<String>() }
+    val colorBufferSize = 3
+
     Box(modifier = modifier) {
         AndroidView(
             factory = { ctx ->
@@ -269,25 +278,42 @@ fun CameraPreviewMorse(
                         }
 
                     val imageAnalysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                         .build()
                         .also { analysis ->
                             analysis.setAnalyzer(executor) { imageProxy ->
                                 val color = detectLedColor(imageProxy)
-                                Log.d("LED Color", "Color $color")
-                                if (colorSequence.isEmpty() || colorSequence.last() != color) {
+
+                                colorBuffer.add(color)
+                                if (colorBuffer.size > colorBufferSize) {
+                                    colorBuffer.removeAt(0)
+                                }
+
+                                val stableColor = if (colorBuffer.size >= colorBufferSize) {
+                                    colorBuffer.groupBy { it }
+                                        .maxByOrNull { it.value.size }
+                                        ?.key ?: color
+                                } else {
+                                    color
+                                }
+                                
+                                Log.d("LED Color", "Raw: $color, Stable: $stableColor")
+                                
+                                if (colorSequence.isEmpty() || colorSequence.last() != stableColor) {
                                     if (colorSequence.size >= 120) {
                                         colorSequence.removeAt(0)
                                     }
-                                    colorSequence.add(color)
+                                    colorSequence.add(stableColor)
                                 }
 
-                                val code = when(color) {
+                                val code = when(stableColor) {
                                     "Зелёный" -> 0
                                     "Красный" -> 1
                                     "Синий" -> 2
                                     else -> null
                                 }
+                                
                                 if (code != null) {
                                     if (code != previousSignal) {
                                         when (code) {
@@ -296,8 +322,6 @@ fun CameraPreviewMorse(
                                                 blueSegmentCount = 0
                                             }
                                             2 -> {
-                                                blueSegmentCount += 1
-
                                                 if (buffer.isNotEmpty()) {
                                                     val decodedChar = morseMap[buffer.toList()] ?: '?'
                                                     message.value += decodedChar
@@ -305,21 +329,20 @@ fun CameraPreviewMorse(
                                                     buffer.clear()
                                                 }
 
-                                                if (blueSegmentCount >= 2) {
+                                                blueSegmentCount += 1
+
+                                                if (blueSegmentCount == 2) {
                                                     if (message.value.isNotEmpty() && message.value.last() != ' ') {
                                                         message.value += " "
                                                         onMessageDecoded(message.value)
                                                     }
-                                                    blueSegmentCount = 0
                                                 }
                                             }
                                         }
                                         previousSignal = code
                                     }
                                 } else {
-                                    if (previousSignal != null) {
-                                        previousSignal = null
-                                    }
+                                    previousSignal = null
                                 }
                                 imageProxy.close()
                             }
@@ -330,9 +353,28 @@ fun CameraPreviewMorse(
 
                     try {
                         cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
+                        val boundCamera = cameraProvider.bindToLifecycle(
                             lifecycleOwner, cameraSelector, preview, imageAnalysis
                         )
+
+                        cameraControl = boundCamera.cameraControl
+                        val cameraInfo = boundCamera.cameraInfo
+
+                        val actualMaxZoom = cameraInfo.zoomState.value?.maxZoomRatio ?: 10f
+                        maxZoomRatio = minOf(actualMaxZoom, 100f)
+                        Log.d("Camera", "Max zoom ratio: $maxZoomRatio")
+
+                        try {
+                            val exposureState = cameraInfo.exposureState
+                            if (exposureState.isExposureCompensationSupported) {
+                                val minCompensation = exposureState.exposureCompensationRange.lower
+                                val compensationStep = (minCompensation * 0.10)                     .toInt()
+                                cameraControl?.setExposureCompensationIndex(compensationStep)
+                                Log.d("Camera", "Exposure compensation set to: $compensationStep (range: ${exposureState.exposureCompensationRange})")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("Camera", "Failed to set exposure: ${e.message}")
+                        }
                     } catch (exc: Exception) {
                         Log.e("Camera", "Bind failed", exc)
                     }
@@ -343,9 +385,34 @@ fun CameraPreviewMorse(
             modifier = Modifier.matchParentSize()
         )
 
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(top = 350.dp, start = 16.dp, end = 16.dp)
+        ) {
+            
+            Slider(
+                value = zoomLevel,
+                onValueChange = { newZoom ->
+                    zoomLevel = newZoom
+                    cameraControl?.setZoomRatio(newZoom)
+                },
+                valueRange = 1f..maxZoomRatio,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFFFA1111),
+                    activeTrackColor = Color(0xFFFA1111),
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                )
+            )
+        }
+
         Box(
             modifier = Modifier
-                .size(100.dp) 
+                .size(100.dp)
                 .align(Alignment.Center)
                 .border(
                     width = 2.dp,
@@ -364,15 +431,19 @@ private fun detectLedColor(imageProxy: ImageProxy): String {
     val rgbaMat = Mat()
     Utils.bitmapToMat(bitmap, rgbaMat)
 
+    val resizedMat = Mat()
+    val scale = 0.5
+    Imgproc.resize(rgbaMat, resizedMat, org.opencv.core.Size(), scale, scale, Imgproc.INTER_LINEAR)
+
     val hsvMat = Mat()
-    Imgproc.cvtColor(rgbaMat, hsvMat, Imgproc.COLOR_RGB2HSV)
+    Imgproc.cvtColor(resizedMat, hsvMat, Imgproc.COLOR_RGB2HSV)
 
     val bgrMat = Mat()
-    Imgproc.cvtColor(rgbaMat, bgrMat, Imgproc.COLOR_RGBA2BGR)
+    Imgproc.cvtColor(resizedMat, bgrMat, Imgproc.COLOR_RGBA2BGR)
 
     val centerX = bgrMat.cols() / 2
     val centerY = bgrMat.rows() / 2
-    val roiSize = 80
+    val roiSize = 60
     val halfSize = roiSize / 2
 
     val startX = (centerX - halfSize).coerceAtLeast(0)
@@ -383,21 +454,29 @@ private fun detectLedColor(imageProxy: ImageProxy): String {
     val roiHsv = hsvMat.submat(startY, endY, startX, endX)
     val roiBgr = bgrMat.submat(startY, endY, startX, endX)
 
-    val hsvMean = Core.mean(roiHsv)
+    val filteredHsv = Mat()
+    val filteredBgr = Mat()
+    Imgproc.medianBlur(roiHsv, filteredHsv, 5)
+    Imgproc.medianBlur(roiBgr, filteredBgr, 5)
+
+    val hsvMean = Core.mean(filteredHsv)
     val hue = hsvMean.`val`[0]
     val saturation = hsvMean.`val`[1]
     val value = hsvMean.`val`[2]
 
-    val bgrMean = Core.mean(roiBgr)
+    val bgrMean = Core.mean(filteredBgr)
     val blue = bgrMean.`val`[0]
     val green = bgrMean.`val`[1]
     val red = bgrMean.`val`[2]
 
     rgbaMat.release()
+    resizedMat.release()
     hsvMat.release()
     bgrMat.release()
     roiHsv.release()
     roiBgr.release()
+    filteredHsv.release()
+    filteredBgr.release()
 
     if (value < 40) return "Светодиод выключен"
 
@@ -406,27 +485,27 @@ private fun detectLedColor(imageProxy: ImageProxy): String {
     }
 
     val result = when {
-        saturation > 50 && value > 80 && (hue < 15 || hue > 345) -> "Красный"
+        saturation > 60 && value > 90 && (hue < 12 || hue > 348) -> "Красный"
 
-        saturation > 50 && value > 60 && hue in 40.0..80.0 -> "Зелёный"
+        saturation > 55 && value > 70 && hue in 45.0..75.0 -> "Зелёный"
 
-        saturation > 50 && value > 70 && hue in 200.0..250.0 -> "Синий"
+        saturation > 55 && value > 75 && hue in 205.0..245.0 -> "Синий"
 
         else -> {
             val maxChannel = max(red, max(green, blue))
             val minChannel = min(red, min(green, blue))
             val colorDiff = maxChannel - minChannel
-            
+
             when {
                 colorDiff < 30 && maxChannel > 120 -> "Белый свет"
-                red > green + 40 && red > blue + 40 && red > 100 -> "Красный"
-                green > red + 30 && green > blue + 30 && green > 90 -> "Зелёный"
-                blue > red + 35 && blue > green + 35 && blue > 95 -> "Синий"
+                red > green + 50 && red > blue + 50 && red > 110 -> "Красный"
+                green > red + 40 && green > blue + 40 && green > 100 -> "Зелёный"
+                blue > red + 40 && blue > green + 40 && blue > 100 -> "Синий"
                 else -> "Неопределённый цвет"
             }
         }
     }
-    
+
     Log.d("LED Color Detail", "HSV: h=$hue s=$saturation v=$value, RGB: r=$red g=$green b=$blue -> $result")
     return result
 }

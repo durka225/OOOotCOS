@@ -7,8 +7,13 @@ import retrofit2.http.Body
 interface MessageService {
 
     @POST("/command")
-    fun sendMessage(@Body text: String): Call<Response>
+    fun sendMessage(@Body request: MessageRequest): Call<Response>
 }
+
+data class MessageRequest(
+    val text: String,
+    val repeat: Int
+)
 
 data class Response(
     val status: String

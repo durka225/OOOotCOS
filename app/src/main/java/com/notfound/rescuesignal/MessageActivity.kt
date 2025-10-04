@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.notfound.rescuesignal.retrofit.RestApi
+import com.notfound.rescuesignal.services.MessageRequest
 import com.notfound.rescuesignal.services.MessageService
 import com.notfound.rescuesignal.services.Response
 import retrofit2.Call
@@ -67,9 +68,10 @@ fun MessageScreen(
     onOpenMain: () -> Unit = {}
 ) {
     var text by remember { mutableStateOf("") }
-    val retrofit = RestApi().instance
-    val messageService = retrofit.create(MessageService::class.java)
+    var repeat by remember { mutableStateOf("1") }
     val context = LocalContext.current
+    val retrofit = RestApi(context).instance
+    val messageService = retrofit.create(MessageService::class.java)
 
     RescueSignalTheme (
         dynamicColor = false
@@ -145,14 +147,57 @@ fun MessageScreen(
                             )
                         }
                     )
-                    Spacer(modifier = Modifier.height(38.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    OutlinedTextField(
+                        value = repeat,
+                        onValueChange = { newValue ->
+                            if (newValue.isEmpty() || newValue.all { it.isDigit() }) {
+                                repeat = newValue
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(70.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = Color.Red,
+                            focusedBorderColor = Color.Red
+                        ),
+                        label = {
+                            Text(
+                                text = "Количество повторений",
+                                style = TextStyle(
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight(400),
+                                    color = Color(0xFFFA1111),
+                                )
+                            )
+                        },
+                        placeholder = {
+                            Text(
+                                text = "1",
+                                style = TextStyle(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight(400),
+                                    color = Color(0xFFEAD6D6),
+                                )
+                            )
+                        }
+                    )
+                    
+                    Spacer(modifier = Modifier.height(18.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Button(
                             onClick = {
-                                val sendMessageRequest: Call<Response> = messageService.sendMessage(text)
+                                val repeatCount = repeat.toIntOrNull() ?: 1
+
+                                val request = MessageRequest(text = text, repeat = repeatCount)
+                                
+                                val sendMessageRequest: Call<Response> = messageService.sendMessage(request)
                                 sendMessageRequest.enqueue(object : Callback<Response> {
                                     override fun onFailure(call: Call<Response>, t: Throwable) {
                                         Log.e("MessageActivity", "Send failed", t)
@@ -163,7 +208,8 @@ fun MessageScreen(
                                         response: retrofit2.Response<Response>
                                     ) {
                                         if (response.isSuccessful) {
-                                            Log.d("MessageActivity", "Sent: ${response.body()}")
+                                            Log.d("MessageActivity", "Sent: text=$text, repeat=$repeatCount")
+                                            Log.d("MessageActivity", "Response: ${response.body()}")
                                         } else {
                                             Log.w("MessageActivity", "Error code: ${response.code()}")
                                         }

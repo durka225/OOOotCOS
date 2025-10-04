@@ -6,7 +6,7 @@ import retrofit2.converter.scalars.ScalarsConverterFactory
 
 class RestApi {
     companion object {
-        private const val BASE_URL = "http://10.173.96.40:80"
+        private const val BASE_URL = "http://10.173.96.203:80"
     }
 
     var instance: Retrofit = Retrofit.Builder()

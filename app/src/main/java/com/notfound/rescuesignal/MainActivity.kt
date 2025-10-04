@@ -48,6 +48,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.notfound.rescuesignal.ui.theme.RescueSignalTheme
+import org.opencv.android.OpenCVLoader
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +56,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MainScreen(
-                onOpenMessage = {startActivity(Intent(this, MessageActivity::class.java)) }
+                onOpenMessage = {startActivity(Intent(this, MessageActivity::class.java)) },
+                onOpenCamera = {startActivity(Intent(this, CameraActivity::class.java)) }
             )
         }
     }
@@ -64,7 +66,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 @Preview
 fun MainScreen(
-    onOpenMessage: () -> Unit = {}
+    onOpenMessage: () -> Unit = {},
+    onOpenCamera: () -> Unit = {}
 ) {
 
     val interactionSource1 = remember { MutableInteractionSource() }
@@ -154,7 +157,7 @@ fun MainScreen(
                             else if (isPressed2) Modifier.size(94.dp) else Modifier.size(83.dp)
                         )
                         OutlinedButton(
-                            onClick = { },
+                            onClick = { onOpenCamera() },
                             interactionSource = interactionSource1,
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier

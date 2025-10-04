@@ -38,6 +38,7 @@ import com.notfound.rescuesignal.ui.theme.RescueSignalTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +69,7 @@ fun MessageScreen(
     var text by remember { mutableStateOf("") }
     val retrofit = RestApi().instance
     val messageService = retrofit.create(MessageService::class.java)
+    val context = LocalContext.current
 
     RescueSignalTheme (
         dynamicColor = false
@@ -101,7 +103,7 @@ fun MessageScreen(
                             modifier = Modifier
                                 .size(42.dp)
                                 .clickable {
-                                    onOpenMain()
+                                    (context as? ComponentActivity)?.finish()
                                 }
                         )
                         Text(
